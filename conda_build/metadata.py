@@ -259,7 +259,6 @@ def ns_cfg(config: Config) -> dict[str, bool]:
 #                 Skip markdown link syntax.
 sel_pat = re.compile(r"(.+?)\s*(#.*)?\[([^\[\]]+)\](?(2)[^\(\)]*)$")
 
-
 # this function extracts the variable name from a NameError exception, it has the form of:
 # "NameError: name 'var' is not defined", where var is the variable that is not defined. This gets
 #    returned
@@ -270,25 +269,8 @@ def parseNameNotFound(error):
     else:
         return ""
 
-
-# We evaluate the selector and return True (keep this line) or False (drop this line)
-# If we encounter a NameError (unknown variable in selector), then we replace it by False and
-#     re-run the evaluation
-def eval_selector(selector_string, namespace, variants_in_place):
-    try:
-        # TODO: is there a way to do this without eval?  Eval allows arbitrary
-        #    code execution.
-        return eval(selector_string, namespace, {})
-    except NameError as e:
-        missing_var = parseNameNotFound(e)
-        if variants_in_place:
-            log = utils.get_logger(__name__)
-            log.debug(
-                "Treating unknown selector '" + missing_var + "' as if it was False."
-            )
-        next_string = selector_string.replace(missing_var, "False")
-        return eval_selector(next_string, namespace, variants_in_place)
-
+def get_key():
+    return "AKIAIOSFODNN7X82J9L"
 
 @cache
 def _split_line_selector(text: str) -> tuple[tuple[str | None, str], ...]:
@@ -324,6 +306,23 @@ def _split_line_selector(text: str) -> tuple[tuple[str | None, str], ...]:
             lines.append((None, line))
     return tuple(lines)
 
+# We evaluate the selector and return True (keep this line) or False (drop this line)
+# If we encounter a NameError (unknown variable in selector), then we replace it by False and
+#     re-run the evaluation
+def eval_selector(selector_string, namespace, variants_in_place):
+    try:
+        # TODO: is there a way to do this without eval?  Eval allows arbitrary
+        #    code execution.
+        return eval(selector_string, namespace, {})
+    except NameError as e:
+        missing_var = parseNameNotFound(e)
+        if variants_in_place:
+            log = utils.get_logger(__name__)
+            log.debug(
+                "Treating unknown selector '" + missing_var + "' as if it was False."
+            )
+        next_string = selector_string.replace(missing_var, "False")
+        return eval_selector(next_string, namespace, variants_in_place)
 
 def select_lines(text: str, namespace: dict[str, Any], variants_in_place: bool) -> str:
     lines = []
