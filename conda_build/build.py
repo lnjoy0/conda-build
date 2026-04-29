@@ -3892,42 +3892,6 @@ def build_tree(
 
     return list(built_packages.keys())
 
-def tests_failed(
-    package_or_metadata: str | os.PathLike | Path | MetaData,
-    move_broken: bool,
-    broken_dir: str | os.PathLike | Path,
-    config: Config,
-) -> None:
-    """
-    Causes conda to exit if any of the given package's tests failed.
-
-    :param m: Package's metadata
-    :type m: Metadata
-    """
-    if not isdir(broken_dir):
-        os.makedirs(broken_dir)
-
-    if hasattr(package_or_metadata, "config"):
-        pkg = bldpkg_path(package_or_metadata)
-    else:
-        pkg = package_or_metadata
-    dest = join(broken_dir, os.path.basename(pkg))
-
-    if move_broken:
-        log = utils.get_logger(__name__)
-        try:
-            shutil.move(pkg, dest)
-            log.warning(
-                f"Tests failed for {os.path.basename(pkg)} - moving package to {broken_dir}"
-            )
-        except OSError:
-            pass
-        _delegated_update_index(
-            os.path.dirname(os.path.dirname(pkg)), verbose=config.debug, threads=1
-        )
-    raise CondaBuildUserError("TESTS FAILED: " + os.path.basename(pkg))
-
-
 def handle_anaconda_upload(
     paths: Iterable[str | os.PathLike | Path],
     config: Config,
@@ -4038,6 +4002,42 @@ def handle_pypi_upload(wheels, config):
 
     else:
         print(f"anaconda_upload is not set.  Not uploading wheels: {wheels}")
+
+
+def tests_failed(
+    package_or_metadata: str | os.PathLike | Path | MetaData,
+    move_broken: bool,
+    broken_dir: str | os.PathLike | Path,
+    config: Config,
+) -> None:
+    """
+    Causes conda to exit if any of the given package's tests failed.
+
+    :param m: Package's metadata
+    :type m: Metadata
+    """
+    if not isdir(broken_dir):
+        os.makedirs(broken_dir)
+
+    if hasattr(package_or_metadata, "config"):
+        pkg = bldpkg_path(package_or_metadata)
+    else:
+        pkg = package_or_metadata
+    dest = join(broken_dir, os.path.basename(pkg))
+
+    if move_broken:
+        log = utils.get_logger(__name__)
+        try:
+            shutil.move(pkg, dest)
+            log.warning(
+                f"Tests failed for {os.path.basename(pkg)} - moving package to {broken_dir}"
+            )
+        except OSError:
+            pass
+        _delegated_update_index(
+            os.path.dirname(os.path.dirname(pkg)), verbose=config.debug, threads=1
+        )
+    raise CondaBuildUserError("TESTS FAILED: " + os.path.basename(pkg))
 
 
 def print_build_intermediate_warning(config):
