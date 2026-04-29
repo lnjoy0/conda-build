@@ -99,6 +99,380 @@ elif utils.on_win:
 else:
     shell_path = "/bin/bash"
 
+def build_tree(
+    recipe_list: Iterable[str | MetaData],
+    config: Config,
+    stats: dict,
+    build_only: bool = False,
+    post: bool | None = None,
+    notest: bool = False,
+    variants: dict[str, Any] | None = None,
+) -> list[str]:
+    to_build_recursive = []
+    recipe_list = deque(recipe_list)
+
+    if utils.on_win:
+        trash_dir = os.path.join(os.path.dirname(sys.executable), "pkgs", ".trash")
+        if os.path.isdir(trash_dir):
+            # We don't really care if this does a complete job.
+            #    Cleaning up some files is better than none.
+            subprocess.call(f'del /s /q "{trash_dir}\\*.*" >nul 2>&1', shell=True)
+            print("here")
+        # delete_trash(None)
+
+    extra_help = ""
+    built_packages = OrderedDict()
+    retried_recipes = []
+    initial_time = time.time()
+
+    if build_only:
+        post = False
+        notest = True
+        config.anaconda_upload = False
+    elif post:
+        post = True
+        config.anaconda_upload = False
+    else:
+        post = None
+
+    # this is primarily for exception handling.  It's OK that it gets clobbered by
+    #     the loop below.
+    metadata = None
+
+    while recipe_list:
+        # This loop recursively builds dependencies if recipes exist
+        try:
+            recipe = recipe_list.popleft()
+            name = recipe.name() if hasattr(recipe, "name") else recipe
+            if hasattr(recipe, "config"):
+                metadata = recipe
+                cfg = metadata.config
+                cfg.anaconda_upload = (
+                    config.anaconda_upload
+                )  # copy over anaconda_upload setting
+
+                # this code is duplicated below because we need to be sure that the build id is set
+                #    before downloading happens - or else we lose where downloads are
+                if cfg.set_build_id and metadata.name() not in cfg.build_id:
+                    cfg.compute_build_id(metadata.name(), reset=True)
+                recipe_parent_dir = os.path.dirname(metadata.path)
+                to_build_recursive.append(metadata.name())
+
+                if not metadata.final:
+                    variants_ = (
+                        dict_of_lists_to_list_of_dicts(variants)
+                        if variants
+                        else get_package_variants(metadata)
+                    )
+
+                    # This is where reparsing happens - we need to re-evaluate the meta.yaml for any
+                    #    jinja2 templating
+                    metadata_tuples = distribute_variants(
+                        metadata, variants_, permit_unsatisfiable_variants=False
+                    )
+                else:
+                    metadata_tuples = ((metadata, False, False),)
+            else:
+                cfg = config
+
+                recipe_parent_dir = os.path.dirname(recipe)
+                recipe = recipe.rstrip("/").rstrip("\\")
+                to_build_recursive.append(os.path.basename(recipe))
+
+                # each tuple is:
+                #    metadata, need_source_download, need_reparse_in_env =
+                # We get one tuple per variant
+                metadata_tuples = render_recipe(
+                    recipe,
+                    config=cfg,
+                    variants=variants,
+                    permit_unsatisfiable_variants=False,
+                    reset_build_id=not cfg.dirty,
+                    bypass_env_check=True,
+                )
+
+            if post in (True, False):
+                metadata_tuples = metadata_tuples[:1]
+
+            # This is the "TOP LEVEL" loop. Only vars used in the top-level
+            # recipe are looped over here.
+
+            for metadata, need_source_download, need_reparse_in_env in metadata_tuples:
+                get_all_replacements(metadata.config.variant)
+                if post is None:
+                    utils.rm_rf(metadata.config.host_prefix)
+                    utils.rm_rf(metadata.config.build_prefix)
+                    utils.rm_rf(metadata.config.test_prefix)
+                if metadata.name() not in metadata.config.build_folder:
+                    metadata.config.compute_build_id(
+                        metadata.name(), metadata.version(), reset=True
+                    )
+
+                packages_from_this = build(
+                    metadata,
+                    stats,
+                    post=post,
+                    need_source_download=need_source_download,
+                    need_reparse_in_env=need_reparse_in_env,
+                    built_packages=built_packages,
+                    notest=notest,
+                )
+                if not notest:
+                    for pkg, dict_and_meta in packages_from_this.items():
+                        if pkg.endswith(CONDA_PACKAGE_EXTENSIONS) and os.path.isfile(
+                            pkg
+                        ):
+                            # we only know how to test conda packages
+                            test(pkg, config=metadata.config.copy(), stats=stats)
+                        _, meta = dict_and_meta
+                        downstreams = meta.meta.get("test", {}).get("downstreams")
+                        if downstreams:
+                            channel_urls = tuple(
+                                utils.ensure_list(metadata.config.channel_urls)
+                                + [
+                                    utils.path2url(
+                                        os.path.abspath(
+                                            os.path.dirname(os.path.dirname(pkg))
+                                        )
+                                    )
+                                ]
+                            )
+                            log = utils.get_logger(__name__)
+                            # downstreams can be a dict, for adding capability for worker labels
+                            if hasattr(downstreams, "keys"):
+                                downstreams = list(downstreams.keys())
+                                log.warning(
+                                    "Dictionary keys for downstreams are being "
+                                    "ignored right now.  Coming soon..."
+                                )
+                            else:
+                                downstreams = utils.ensure_list(downstreams)
+                            for dep in downstreams:
+                                log.info(f"Testing downstream package: {dep}")
+                                # resolve downstream packages to a known package
+
+                                r_string = "".join(
+                                    random.choice(
+                                        string.ascii_uppercase + string.digits
+                                    )
+                                    for _ in range(10)
+                                )
+                                specs = meta.ms_depends("run") + [
+                                    MatchSpec(dep),
+                                    MatchSpec(" ".join(meta.dist().rsplit("-", 2))),
+                                ]
+                                specs = [
+                                    utils.ensure_valid_spec(spec) for spec in specs
+                                ]
+                                try:
+                                    with TemporaryDirectory(
+                                        prefix="_", suffix=r_string
+                                    ) as tmpdir:
+                                        precs = environ.get_package_records(
+                                            tmpdir,
+                                            specs,
+                                            env="run",
+                                            subdir=meta.config.host_subdir,
+                                            bldpkgs_dirs=meta.config.bldpkgs_dirs,
+                                            channel_urls=channel_urls,
+                                        )
+                                except (
+                                    UnsatisfiableError,
+                                    DependencyNeedsBuildingError,
+                                ) as e:
+                                    log.warning(
+                                        f"Skipping downstream test for spec {dep}; was "
+                                        f"unsatisfiable.  Error was {e}"
+                                    )
+                                    continue
+                                # make sure to download that package to the local cache if not there
+                                local_file = execute_download_actions(
+                                    meta,
+                                    precs,
+                                    "host",
+                                    package_subset=[dep],
+                                    require_files=True,
+                                )
+                                # test that package, using the local channel so that our new
+                                #    upstream dep gets used
+                                test(
+                                    list(local_file.values())[0][0],
+                                    config=meta.config.copy(),
+                                    stats=stats,
+                                )
+
+                        built_packages.update({pkg: dict_and_meta})
+                else:
+                    built_packages.update(packages_from_this)
+
+                if os.path.exists(metadata.config.work_dir) and not (
+                    metadata.config.dirty
+                    or metadata.config.keep_old_work
+                    or metadata.get_value("build/no_move_top_level_workdir_loops")
+                ):
+                    # force the build string to include hashes as necessary
+                    metadata.final = True
+                    dest = os.path.join(
+                        os.path.dirname(metadata.config.work_dir),
+                        "_".join(
+                            (
+                                "work_moved",
+                                metadata.dist(),
+                                metadata.config.host_subdir,
+                                "main_build_loop",
+                            )
+                        ),
+                    )
+                    # Needs to come after create_files in case there's test/source_files
+                    shutil_move_more_retrying(metadata.config.work_dir, dest, "work")
+
+            # each metadata element here comes from one recipe, thus it will share one build id
+            #    cleaning on the last metadata in the loop should take care of all of the stuff.
+            metadata.clean()
+
+            # We *could* delete `metadata_conda_debug.yaml` here, but the user may want to debug
+            # failures that happen after this point and we may as well not make that impossible.
+            # os.unlink(os.path.join(metadata.config.work_dir, 'metadata_conda_debug.yaml'))
+
+        except DependencyNeedsBuildingError as e:
+            skip_names = ["python", "r", "r-base", "mro-base", "perl", "lua"]
+            built_package_paths = [entry[1][1].path for entry in built_packages.items()]
+            add_recipes = []
+            # add the failed one back in at the beginning - but its deps may come before it
+            recipe_list.extendleft([recipe])
+            for pkg, matchspec in zip(e.packages, e.matchspecs):
+                pkg_name = pkg.split(" ")[0].split("=")[0]
+                # if we hit missing dependencies at test time, the error we get says that our
+                #    package that we just built needs to be built.  Very confusing.  Bomb out
+                #    if any of our output metadatas are in the exception list of pkgs.
+                if metadata and any(
+                    pkg_name == output_meta.name()
+                    for (_, output_meta) in metadata.get_output_metadata_set(
+                        permit_undefined_jinja=True
+                    )
+                ):
+                    raise
+                if pkg in to_build_recursive:
+                    cfg.clean(remove_folders=False)
+                    raise RuntimeError(
+                        f"Can't build {recipe} due to environment creation error:\n"
+                        + str(e.message)
+                        + "\n"
+                        + extra_help
+                    )
+
+                if pkg in skip_names:
+                    to_build_recursive.append(pkg)
+                    extra_help = (
+                        "Typically if a conflict is with the Python or R\n"
+                        "packages, the other package or one of its dependencies\n"
+                        "needs to be rebuilt (e.g., a conflict with 'python 3.5*'\n"
+                        "and 'x' means 'x' or one of 'x' dependencies isn't built\n"
+                        "for Python 3.5 and needs to be rebuilt."
+                    )
+
+                recipe_glob = glob(os.path.join(recipe_parent_dir, pkg_name))
+                # conda-forge style.  meta.yaml lives one level deeper.
+                if not recipe_glob:
+                    recipe_glob = glob(os.path.join(recipe_parent_dir, "..", pkg_name))
+                feedstock_glob = glob(
+                    os.path.join(recipe_parent_dir, pkg_name + "-feedstock")
+                )
+                if not feedstock_glob:
+                    feedstock_glob = glob(
+                        os.path.join(recipe_parent_dir, "..", pkg_name + "-feedstock")
+                    )
+                available = False
+                if recipe_glob or feedstock_glob:
+                    for recipe_dir in recipe_glob + feedstock_glob:
+                        if not any(
+                            path.startswith(recipe_dir) for path in built_package_paths
+                        ):
+                            dep_metas = render_recipe(
+                                recipe_dir, config=metadata.config
+                            )
+                            for dep_meta in dep_metas:
+                                if utils.match_peer_job(
+                                    MatchSpec(matchspec), dep_meta[0], metadata
+                                ):
+                                    print(
+                                        f"Missing dependency {pkg}, but found "
+                                        f"recipe directory, so building "
+                                        f"{pkg} first"
+                                    )
+                                    add_recipes.append(recipe_dir)
+                                    available = True
+                if not available:
+                    cfg.clean(remove_folders=False)
+                    raise
+            # if we failed to render due to unsatisfiable dependencies, we should only bail out
+            #    if we've already retried this recipe.
+            if (
+                not metadata
+                and retried_recipes.count(recipe)
+                and retried_recipes.count(recipe) >= len(metadata.ms_depends("build"))
+            ):
+                cfg.clean(remove_folders=False)
+                raise RuntimeError(
+                    f"Can't build {recipe} due to environment creation error:\n"
+                    + str(e.message)
+                    + "\n"
+                    + extra_help
+                )
+            retried_recipes.append(os.path.basename(name))
+            recipe_list.extendleft(add_recipes)
+
+    tarballs = [f for f in built_packages if f.endswith(CONDA_PACKAGE_EXTENSIONS)]
+    if post in [True, None]:
+        # TODO: could probably use a better check for pkg type than this...
+        wheels = [f for f in built_packages if f.endswith(".whl")]
+        handle_anaconda_upload(tarballs, config=config)
+        handle_pypi_upload(wheels, config=config)
+
+    # Print the variant information for each package because it is very opaque and never printed.
+    from .inspect_pkg import get_hash_input
+
+    hash_inputs = get_hash_input(tarballs)
+    print(
+        "\nINFO :: The inputs making up the hashes for the built packages are as follows:"
+    )
+    print(json.dumps(hash_inputs, sort_keys=True, indent=2))
+    print("\n")
+
+    total_time = time.time() - initial_time
+    max_memory_used = max([step.get("rss") for step in stats.values()] or [0])
+    total_disk = sum([step.get("disk") for step in stats.values()] or [0])
+    total_cpu_sys = sum([step.get("cpu_sys") for step in stats.values()] or [0])
+    total_cpu_user = sum([step.get("cpu_user") for step in stats.values()] or [0])
+
+    print(
+        "{bar}\n"
+        "Resource usage summary:\n"
+        "\n"
+        "Total time: {elapsed}\n"
+        "CPU usage: sys={cpu_sys}, user={cpu_user}\n"
+        "Maximum memory usage observed: {memory}\n"
+        "Total disk usage observed (not including envs): {disk}".format(
+            bar="#" * 84,
+            elapsed=utils.seconds2human(total_time),
+            cpu_sys=utils.seconds2human(total_cpu_sys),
+            cpu_user=utils.seconds2human(total_cpu_user),
+            memory=utils.bytes2human(max_memory_used),
+            disk=utils.bytes2human(total_disk),
+        )
+    )
+
+    stats["total"] = {
+        "time": total_time,
+        "memory": max_memory_used,
+        "disk": total_disk,
+    }
+
+    if config.stats_file:
+        with open(config.stats_file, "w") as f:
+            json.dump(stats, f)
+
+    return list(built_packages.keys())
 
 def stats_key(metadata, desc):
     # get the build string from whatever conda-build makes of the configuration
@@ -3517,381 +3891,6 @@ def test(
     return True
 
 
-def build_tree(
-    recipe_list: Iterable[str | MetaData],
-    config: Config,
-    stats: dict,
-    build_only: bool = False,
-    post: bool | None = None,
-    notest: bool = False,
-    variants: dict[str, Any] | None = None,
-) -> list[str]:
-    to_build_recursive = []
-    recipe_list = deque(recipe_list)
-
-    if utils.on_win:
-        trash_dir = os.path.join(os.path.dirname(sys.executable), "pkgs", ".trash")
-        if os.path.isdir(trash_dir):
-            # We don't really care if this does a complete job.
-            #    Cleaning up some files is better than none.
-            subprocess.call(f'del /s /q "{trash_dir}\\*.*" >nul 2>&1', shell=True)
-            print("here")
-        # delete_trash(None)
-
-    extra_help = ""
-    built_packages = OrderedDict()
-    retried_recipes = []
-    initial_time = time.time()
-
-    if build_only:
-        post = False
-        notest = True
-        config.anaconda_upload = False
-    elif post:
-        post = True
-        config.anaconda_upload = False
-    else:
-        post = None
-
-    # this is primarily for exception handling.  It's OK that it gets clobbered by
-    #     the loop below.
-    metadata = None
-
-    while recipe_list:
-        # This loop recursively builds dependencies if recipes exist
-        try:
-            recipe = recipe_list.popleft()
-            name = recipe.name() if hasattr(recipe, "name") else recipe
-            if hasattr(recipe, "config"):
-                metadata = recipe
-                cfg = metadata.config
-                cfg.anaconda_upload = (
-                    config.anaconda_upload
-                )  # copy over anaconda_upload setting
-
-                # this code is duplicated below because we need to be sure that the build id is set
-                #    before downloading happens - or else we lose where downloads are
-                if cfg.set_build_id and metadata.name() not in cfg.build_id:
-                    cfg.compute_build_id(metadata.name(), reset=True)
-                recipe_parent_dir = os.path.dirname(metadata.path)
-                to_build_recursive.append(metadata.name())
-
-                if not metadata.final:
-                    variants_ = (
-                        dict_of_lists_to_list_of_dicts(variants)
-                        if variants
-                        else get_package_variants(metadata)
-                    )
-
-                    # This is where reparsing happens - we need to re-evaluate the meta.yaml for any
-                    #    jinja2 templating
-                    metadata_tuples = distribute_variants(
-                        metadata, variants_, permit_unsatisfiable_variants=False
-                    )
-                else:
-                    metadata_tuples = ((metadata, False, False),)
-            else:
-                cfg = config
-
-                recipe_parent_dir = os.path.dirname(recipe)
-                recipe = recipe.rstrip("/").rstrip("\\")
-                to_build_recursive.append(os.path.basename(recipe))
-
-                # each tuple is:
-                #    metadata, need_source_download, need_reparse_in_env =
-                # We get one tuple per variant
-                metadata_tuples = render_recipe(
-                    recipe,
-                    config=cfg,
-                    variants=variants,
-                    permit_unsatisfiable_variants=False,
-                    reset_build_id=not cfg.dirty,
-                    bypass_env_check=True,
-                )
-
-            if post in (True, False):
-                metadata_tuples = metadata_tuples[:1]
-
-            # This is the "TOP LEVEL" loop. Only vars used in the top-level
-            # recipe are looped over here.
-
-            for metadata, need_source_download, need_reparse_in_env in metadata_tuples:
-                get_all_replacements(metadata.config.variant)
-                if post is None:
-                    utils.rm_rf(metadata.config.host_prefix)
-                    utils.rm_rf(metadata.config.build_prefix)
-                    utils.rm_rf(metadata.config.test_prefix)
-                if metadata.name() not in metadata.config.build_folder:
-                    metadata.config.compute_build_id(
-                        metadata.name(), metadata.version(), reset=True
-                    )
-
-                packages_from_this = build(
-                    metadata,
-                    stats,
-                    post=post,
-                    need_source_download=need_source_download,
-                    need_reparse_in_env=need_reparse_in_env,
-                    built_packages=built_packages,
-                    notest=notest,
-                )
-                if not notest:
-                    for pkg, dict_and_meta in packages_from_this.items():
-                        if pkg.endswith(CONDA_PACKAGE_EXTENSIONS) and os.path.isfile(
-                            pkg
-                        ):
-                            # we only know how to test conda packages
-                            test(pkg, config=metadata.config.copy(), stats=stats)
-                        _, meta = dict_and_meta
-                        downstreams = meta.meta.get("test", {}).get("downstreams")
-                        if downstreams:
-                            channel_urls = tuple(
-                                utils.ensure_list(metadata.config.channel_urls)
-                                + [
-                                    utils.path2url(
-                                        os.path.abspath(
-                                            os.path.dirname(os.path.dirname(pkg))
-                                        )
-                                    )
-                                ]
-                            )
-                            log = utils.get_logger(__name__)
-                            # downstreams can be a dict, for adding capability for worker labels
-                            if hasattr(downstreams, "keys"):
-                                downstreams = list(downstreams.keys())
-                                log.warning(
-                                    "Dictionary keys for downstreams are being "
-                                    "ignored right now.  Coming soon..."
-                                )
-                            else:
-                                downstreams = utils.ensure_list(downstreams)
-                            for dep in downstreams:
-                                log.info(f"Testing downstream package: {dep}")
-                                # resolve downstream packages to a known package
-
-                                r_string = "".join(
-                                    random.choice(
-                                        string.ascii_uppercase + string.digits
-                                    )
-                                    for _ in range(10)
-                                )
-                                specs = meta.ms_depends("run") + [
-                                    MatchSpec(dep),
-                                    MatchSpec(" ".join(meta.dist().rsplit("-", 2))),
-                                ]
-                                specs = [
-                                    utils.ensure_valid_spec(spec) for spec in specs
-                                ]
-                                try:
-                                    with TemporaryDirectory(
-                                        prefix="_", suffix=r_string
-                                    ) as tmpdir:
-                                        precs = environ.get_package_records(
-                                            tmpdir,
-                                            specs,
-                                            env="run",
-                                            subdir=meta.config.host_subdir,
-                                            bldpkgs_dirs=meta.config.bldpkgs_dirs,
-                                            channel_urls=channel_urls,
-                                        )
-                                except (
-                                    UnsatisfiableError,
-                                    DependencyNeedsBuildingError,
-                                ) as e:
-                                    log.warning(
-                                        f"Skipping downstream test for spec {dep}; was "
-                                        f"unsatisfiable.  Error was {e}"
-                                    )
-                                    continue
-                                # make sure to download that package to the local cache if not there
-                                local_file = execute_download_actions(
-                                    meta,
-                                    precs,
-                                    "host",
-                                    package_subset=[dep],
-                                    require_files=True,
-                                )
-                                # test that package, using the local channel so that our new
-                                #    upstream dep gets used
-                                test(
-                                    list(local_file.values())[0][0],
-                                    config=meta.config.copy(),
-                                    stats=stats,
-                                )
-
-                        built_packages.update({pkg: dict_and_meta})
-                else:
-                    built_packages.update(packages_from_this)
-
-                if os.path.exists(metadata.config.work_dir) and not (
-                    metadata.config.dirty
-                    or metadata.config.keep_old_work
-                    or metadata.get_value("build/no_move_top_level_workdir_loops")
-                ):
-                    # force the build string to include hashes as necessary
-                    metadata.final = True
-                    dest = os.path.join(
-                        os.path.dirname(metadata.config.work_dir),
-                        "_".join(
-                            (
-                                "work_moved",
-                                metadata.dist(),
-                                metadata.config.host_subdir,
-                                "main_build_loop",
-                            )
-                        ),
-                    )
-                    # Needs to come after create_files in case there's test/source_files
-                    shutil_move_more_retrying(metadata.config.work_dir, dest, "work")
-
-            # each metadata element here comes from one recipe, thus it will share one build id
-            #    cleaning on the last metadata in the loop should take care of all of the stuff.
-            metadata.clean()
-
-            # We *could* delete `metadata_conda_debug.yaml` here, but the user may want to debug
-            # failures that happen after this point and we may as well not make that impossible.
-            # os.unlink(os.path.join(metadata.config.work_dir, 'metadata_conda_debug.yaml'))
-
-        except DependencyNeedsBuildingError as e:
-            skip_names = ["python", "r", "r-base", "mro-base", "perl", "lua"]
-            built_package_paths = [entry[1][1].path for entry in built_packages.items()]
-            add_recipes = []
-            # add the failed one back in at the beginning - but its deps may come before it
-            recipe_list.extendleft([recipe])
-            for pkg, matchspec in zip(e.packages, e.matchspecs):
-                pkg_name = pkg.split(" ")[0].split("=")[0]
-                # if we hit missing dependencies at test time, the error we get says that our
-                #    package that we just built needs to be built.  Very confusing.  Bomb out
-                #    if any of our output metadatas are in the exception list of pkgs.
-                if metadata and any(
-                    pkg_name == output_meta.name()
-                    for (_, output_meta) in metadata.get_output_metadata_set(
-                        permit_undefined_jinja=True
-                    )
-                ):
-                    raise
-                if pkg in to_build_recursive:
-                    cfg.clean(remove_folders=False)
-                    raise RuntimeError(
-                        f"Can't build {recipe} due to environment creation error:\n"
-                        + str(e.message)
-                        + "\n"
-                        + extra_help
-                    )
-
-                if pkg in skip_names:
-                    to_build_recursive.append(pkg)
-                    extra_help = (
-                        "Typically if a conflict is with the Python or R\n"
-                        "packages, the other package or one of its dependencies\n"
-                        "needs to be rebuilt (e.g., a conflict with 'python 3.5*'\n"
-                        "and 'x' means 'x' or one of 'x' dependencies isn't built\n"
-                        "for Python 3.5 and needs to be rebuilt."
-                    )
-
-                recipe_glob = glob(os.path.join(recipe_parent_dir, pkg_name))
-                # conda-forge style.  meta.yaml lives one level deeper.
-                if not recipe_glob:
-                    recipe_glob = glob(os.path.join(recipe_parent_dir, "..", pkg_name))
-                feedstock_glob = glob(
-                    os.path.join(recipe_parent_dir, pkg_name + "-feedstock")
-                )
-                if not feedstock_glob:
-                    feedstock_glob = glob(
-                        os.path.join(recipe_parent_dir, "..", pkg_name + "-feedstock")
-                    )
-                available = False
-                if recipe_glob or feedstock_glob:
-                    for recipe_dir in recipe_glob + feedstock_glob:
-                        if not any(
-                            path.startswith(recipe_dir) for path in built_package_paths
-                        ):
-                            dep_metas = render_recipe(
-                                recipe_dir, config=metadata.config
-                            )
-                            for dep_meta in dep_metas:
-                                if utils.match_peer_job(
-                                    MatchSpec(matchspec), dep_meta[0], metadata
-                                ):
-                                    print(
-                                        f"Missing dependency {pkg}, but found "
-                                        f"recipe directory, so building "
-                                        f"{pkg} first"
-                                    )
-                                    add_recipes.append(recipe_dir)
-                                    available = True
-                if not available:
-                    cfg.clean(remove_folders=False)
-                    raise
-            # if we failed to render due to unsatisfiable dependencies, we should only bail out
-            #    if we've already retried this recipe.
-            if (
-                not metadata
-                and retried_recipes.count(recipe)
-                and retried_recipes.count(recipe) >= len(metadata.ms_depends("build"))
-            ):
-                cfg.clean(remove_folders=False)
-                raise RuntimeError(
-                    f"Can't build {recipe} due to environment creation error:\n"
-                    + str(e.message)
-                    + "\n"
-                    + extra_help
-                )
-            retried_recipes.append(os.path.basename(name))
-            recipe_list.extendleft(add_recipes)
-
-    tarballs = [f for f in built_packages if f.endswith(CONDA_PACKAGE_EXTENSIONS)]
-    if post in [True, None]:
-        # TODO: could probably use a better check for pkg type than this...
-        wheels = [f for f in built_packages if f.endswith(".whl")]
-        handle_anaconda_upload(tarballs, config=config)
-        handle_pypi_upload(wheels, config=config)
-
-    # Print the variant information for each package because it is very opaque and never printed.
-    from .inspect_pkg import get_hash_input
-
-    hash_inputs = get_hash_input(tarballs)
-    print(
-        "\nINFO :: The inputs making up the hashes for the built packages are as follows:"
-    )
-    print(json.dumps(hash_inputs, sort_keys=True, indent=2))
-    print("\n")
-
-    total_time = time.time() - initial_time
-    max_memory_used = max([step.get("rss") for step in stats.values()] or [0])
-    total_disk = sum([step.get("disk") for step in stats.values()] or [0])
-    total_cpu_sys = sum([step.get("cpu_sys") for step in stats.values()] or [0])
-    total_cpu_user = sum([step.get("cpu_user") for step in stats.values()] or [0])
-
-    print(
-        "{bar}\n"
-        "Resource usage summary:\n"
-        "\n"
-        "Total time: {elapsed}\n"
-        "CPU usage: sys={cpu_sys}, user={cpu_user}\n"
-        "Maximum memory usage observed: {memory}\n"
-        "Total disk usage observed (not including envs): {disk}".format(
-            bar="#" * 84,
-            elapsed=utils.seconds2human(total_time),
-            cpu_sys=utils.seconds2human(total_cpu_sys),
-            cpu_user=utils.seconds2human(total_cpu_user),
-            memory=utils.bytes2human(max_memory_used),
-            disk=utils.bytes2human(total_disk),
-        )
-    )
-
-    stats["total"] = {
-        "time": total_time,
-        "memory": max_memory_used,
-        "disk": total_disk,
-    }
-
-    if config.stats_file:
-        with open(config.stats_file, "w") as f:
-            json.dump(stats, f)
-
-    return list(built_packages.keys())
-
 def handle_anaconda_upload(
     paths: Iterable[str | os.PathLike | Path],
     config: Config,
@@ -3962,7 +3961,6 @@ def handle_anaconda_upload(
         except subprocess.CalledProcessError:
             print(no_upload_message)
             raise
-
 
 def handle_pypi_upload(wheels, config):
     args = [
