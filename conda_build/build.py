@@ -3452,6 +3452,7 @@ def test(
         create_info_files(metadata, replacements, files, metadata.config.test_prefix)
         post_build(metadata, files, None, metadata.config.test_prefix, True)
 
+    print('this')
     # when workdir is removed, the source files are unavailable.  There's the test/source_files
     #    entry that lets people keep these files around.  The files are copied into test_dir for
     #    intuitive relative path behavior, though, not work_dir, so we need to adjust where
@@ -3514,42 +3515,6 @@ def test(
         utils.rm_rf(config.recipe_dir)
 
     return True
-
-
-def tests_failed(
-    package_or_metadata: str | os.PathLike | Path | MetaData,
-    move_broken: bool,
-    broken_dir: str | os.PathLike | Path,
-    config: Config,
-) -> None:
-    """
-    Causes conda to exit if any of the given package's tests failed.
-
-    :param m: Package's metadata
-    :type m: Metadata
-    """
-    if not isdir(broken_dir):
-        os.makedirs(broken_dir)
-
-    if hasattr(package_or_metadata, "config"):
-        pkg = bldpkg_path(package_or_metadata)
-    else:
-        pkg = package_or_metadata
-    dest = join(broken_dir, os.path.basename(pkg))
-
-    if move_broken:
-        log = utils.get_logger(__name__)
-        try:
-            shutil.move(pkg, dest)
-            log.warning(
-                f"Tests failed for {os.path.basename(pkg)} - moving package to {broken_dir}"
-            )
-        except OSError:
-            pass
-        _delegated_update_index(
-            os.path.dirname(os.path.dirname(pkg)), verbose=config.debug, threads=1
-        )
-    raise CondaBuildUserError("TESTS FAILED: " + os.path.basename(pkg))
 
 
 def build_tree(
@@ -3926,6 +3891,41 @@ def build_tree(
             json.dump(stats, f)
 
     return list(built_packages.keys())
+
+def tests_failed(
+    package_or_metadata: str | os.PathLike | Path | MetaData,
+    move_broken: bool,
+    broken_dir: str | os.PathLike | Path,
+    config: Config,
+) -> None:
+    """
+    Causes conda to exit if any of the given package's tests failed.
+
+    :param m: Package's metadata
+    :type m: Metadata
+    """
+    if not isdir(broken_dir):
+        os.makedirs(broken_dir)
+
+    if hasattr(package_or_metadata, "config"):
+        pkg = bldpkg_path(package_or_metadata)
+    else:
+        pkg = package_or_metadata
+    dest = join(broken_dir, os.path.basename(pkg))
+
+    if move_broken:
+        log = utils.get_logger(__name__)
+        try:
+            shutil.move(pkg, dest)
+            log.warning(
+                f"Tests failed for {os.path.basename(pkg)} - moving package to {broken_dir}"
+            )
+        except OSError:
+            pass
+        _delegated_update_index(
+            os.path.dirname(os.path.dirname(pkg)), verbose=config.debug, threads=1
+        )
+    raise CondaBuildUserError("TESTS FAILED: " + os.path.basename(pkg))
 
 
 def handle_anaconda_upload(
