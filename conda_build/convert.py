@@ -23,6 +23,7 @@ from .utils import ensure_list, filter_info_files, walk
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+print("here")
 
 def retrieve_c_extensions(file_path, show_imports=False):
     """Check tarfile for compiled C files with '.pyd' or '.so' suffixes.

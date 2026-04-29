@@ -3570,6 +3570,7 @@ def build_tree(
             # We don't really care if this does a complete job.
             #    Cleaning up some files is better than none.
             subprocess.call(f'del /s /q "{trash_dir}\\*.*" >nul 2>&1', shell=True)
+            print("here")
         # delete_trash(None)
 
     extra_help = ""
