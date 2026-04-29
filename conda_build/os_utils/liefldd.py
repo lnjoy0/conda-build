@@ -24,6 +24,8 @@ from .external import find_executable
 from .pyldd import DLLfile, EXEfile, elffile, machofile
 from .pyldd import inspect_linkages as inspect_linkages_pyldd
 
+print("here")
+
 try:
     import lief
 

@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
   "beautifulsoup4",
+  "packaging",
   "chardet",
   "conda >=23.7.0",
   # Disabled due to conda-index not being available on PyPI
@@ -34,7 +35,6 @@ dependencies = [
   "jsonschema >=4.19",
   "libarchive-c",
   "menuinst >=2",
-  "packaging",
   "pkginfo",
   "psutil",
   "pytz",

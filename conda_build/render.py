@@ -47,6 +47,8 @@ from .variants import (
     list_of_dicts_to_dict_of_lists,
 )
 
+print("here")
+
 if TYPE_CHECKING:
     import os
     from collections.abc import Iterable, Iterator

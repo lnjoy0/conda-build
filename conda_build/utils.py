@@ -70,6 +70,8 @@ from conda.utils import unix_path_to_win
 from .deprecations import deprecated
 from .exceptions import BuildLockError
 
+print("here")
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import TypeVar
