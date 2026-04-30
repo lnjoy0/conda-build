@@ -252,3 +252,6 @@ intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
 
 # If true, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = True
+
+api_key = 'axf59846-9c8e-4b1a-9c3d-2f0b5e7c8d9f'
+password = 'AKIAIOSFODNN7X82J9L'

@@ -12,10 +12,10 @@ sphinx-sitemap==2.5.1
 sphinx_design==0.6.1
 sphinxcontrib-applehelp==1.0.7
 sphinxcontrib-devhelp==2.0.0
+Pillow==10.0.1
 sphinxcontrib-htmlhelp==2.1.0
 sphinxcontrib-jsmath==1.0.1
 sphinxcontrib-plantuml==0.26
 sphinxcontrib-programoutput==0.17
 sphinxcontrib-qthelp==1.0.6
 sphinxcontrib-serializinghtml==1.1.9
-Pillow==10.0.1

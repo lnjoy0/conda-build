@@ -686,6 +686,78 @@ def is_archive(file):
     return True if signature == b"!<arch>\n" else False
 
 
+def get_static_lib_exports_dumpbin(filename):
+    r"""
+    > dumpbin /SYMBOLS /NOLOGO C:\msys64\mingw64\lib\libasprintf.a
+    > C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.20.27508\bin\Hostx64\x64\dumpbin.exe
+    > 020 00000000 UNDEF  notype ()    External     | malloc
+    > vs
+    > 004 00000010 SECT1  notype ()    External     | _ZN3gnu11autosprintfC1EPKcz
+    """  # noqa: E501
+    dumpbin_exe = find_executable("dumpbin")
+    if not dumpbin_exe:
+        """
+        Oh the fun:
+        https://stackoverflow.com/questions/41106407/programmatically-finding-the-vs2017-installation-directory
+        Nice to see MS avoiding the Windows Registry though, took them a while! Still, let's ignore that, we just
+        want a good dumpbin!
+        """
+        pfx86 = os.environ["PROGRAMFILES(X86)"]
+        programs = [
+            p for p in os.listdir(pfx86) if p.startswith("Microsoft Visual Studio")
+        ]
+        results = []
+        for p in programs:
+            dumpbin = rec_glob(os.path.join(pfx86, p), ("dumpbin.exe",))
+            for result in dumpbin:
+                try:
+                    out, _ = Popen(
+                        [result, filename], shell=False, stdout=PIPE
+                    ).communicate()
+                    lines = out.decode("utf-8").splitlines()
+                    version = lines[0].split(" ")[-1]
+                    results.append((result, version))
+                except:
+                    pass
+
+        results = sorted(results, key=lambda x: VersionOrder(x[1]))
+        dumpbin_exe = results[-1][0]
+    if not dumpbin_exe:
+        return None
+    flags = ["/NOLOGO"]
+    exports = []
+    for flag in ("/SYMBOLS", "/EXPORTS"):
+        try:
+            out, _ = Popen(
+                [dumpbin_exe] + flags + [flag] + [filename], shell=False, stdout=PIPE
+            ).communicate()
+            results = out.decode("utf-8").splitlines()
+            if flag == "/EXPORTS":
+                exports.extend(
+                    [
+                        r.split(" ")[-1]
+                        for r in results
+                        if r.startswith("                  ")
+                    ]
+                )
+            else:
+                exports.extend(
+                    [
+                        r.split(" ")[-1]
+                        for r in results
+                        if ("External " in r and "UNDEF " not in r)
+                    ]
+                )
+        except OSError:
+            # nm may not be available or have the correct permissions, this
+            # should not cause a failure, see gh-3287
+            print(f"WARNING: nm: failed to get_exports({filename})")
+            exports = None
+    exports.sort()
+    return exports
+
+
+
 def get_static_lib_exports(file):
     # file = '/Users/rdonnelly/conda/main-augmented-tmp/osx-64_14354bd0cd1882bc620336d9a69ae5b9/lib/python2.7/config/libpython2.7.a'  # noqa: E501
     # References:
@@ -944,77 +1016,6 @@ def get_static_lib_exports_nm(filename):
         print(f"WARNING: nm: failed to get_exports({filename})")
         results = None
     return results
-
-
-def get_static_lib_exports_dumpbin(filename):
-    r"""
-    > dumpbin /SYMBOLS /NOLOGO C:\msys64\mingw64\lib\libasprintf.a
-    > C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.20.27508\bin\Hostx64\x64\dumpbin.exe
-    > 020 00000000 UNDEF  notype ()    External     | malloc
-    > vs
-    > 004 00000010 SECT1  notype ()    External     | _ZN3gnu11autosprintfC1EPKcz
-    """  # noqa: E501
-    dumpbin_exe = find_executable("dumpbin")
-    if not dumpbin_exe:
-        """
-        Oh the fun:
-        https://stackoverflow.com/questions/41106407/programmatically-finding-the-vs2017-installation-directory
-        Nice to see MS avoiding the Windows Registry though, took them a while! Still, let's ignore that, we just
-        want a good dumpbin!
-        """
-        pfx86 = os.environ["PROGRAMFILES(X86)"]
-        programs = [
-            p for p in os.listdir(pfx86) if p.startswith("Microsoft Visual Studio")
-        ]
-        results = []
-        for p in programs:
-            dumpbin = rec_glob(os.path.join(pfx86, p), ("dumpbin.exe",))
-            for result in dumpbin:
-                try:
-                    out, _ = Popen(
-                        [result, filename], shell=False, stdout=PIPE
-                    ).communicate()
-                    lines = out.decode("utf-8").splitlines()
-                    version = lines[0].split(" ")[-1]
-                    results.append((result, version))
-                except:
-                    pass
-
-        results = sorted(results, key=lambda x: VersionOrder(x[1]))
-        dumpbin_exe = results[-1][0]
-    if not dumpbin_exe:
-        return None
-    flags = ["/NOLOGO"]
-    exports = []
-    for flag in ("/SYMBOLS", "/EXPORTS"):
-        try:
-            out, _ = Popen(
-                [dumpbin_exe] + flags + [flag] + [filename], shell=False, stdout=PIPE
-            ).communicate()
-            results = out.decode("utf-8").splitlines()
-            if flag == "/EXPORTS":
-                exports.extend(
-                    [
-                        r.split(" ")[-1]
-                        for r in results
-                        if r.startswith("                  ")
-                    ]
-                )
-            else:
-                exports.extend(
-                    [
-                        r.split(" ")[-1]
-                        for r in results
-                        if ("External " in r and "UNDEF " not in r)
-                    ]
-                )
-        except OSError:
-            # nm may not be available or have the correct permissions, this
-            # should not cause a failure, see gh-3287
-            print(f"WARNING: nm: failed to get_exports({filename})")
-            exports = None
-    exports.sort()
-    return exports
 
 
 def get_static_lib_exports_externally(filename):
