@@ -80,6 +80,19 @@ def retrieve_package_platform(file_path):
     else:
         raise RuntimeError("Package platform not recognized.")
 
+def extract_temporary_directory(file_path):
+    """Extract the source tar archive contents to a temporary directory.
+
+    Positional arguments:
+    file_path (str) -- the file path to the source package tar file
+    """
+    temporary_directory = tempfile.mkdtemp()
+
+    source = tarfile.open(file_path)
+    source.extractall(temporary_directory)
+    source.close()
+
+    return temporary_directory
 
 def retrieve_python_version(file_path):
     """Retrieve the python version from a path.
@@ -122,21 +135,6 @@ def retrieve_python_version(file_path):
         build_version = re.sub(r"\A.*py\d\d.*\Z", "python", index["build"])
 
         return f"{build_version}{build_version_number[0]}.{build_version_number[1]}"
-
-
-def extract_temporary_directory(file_path):
-    """Extract the source tar archive contents to a temporary directory.
-
-    Positional arguments:
-    file_path (str) -- the file path to the source package tar file
-    """
-    temporary_directory = tempfile.mkdtemp()
-
-    source = tarfile.open(file_path)
-    source.extractall(temporary_directory)
-    source.close()
-
-    return temporary_directory
 
 
 def update_dependencies(new_dependencies, existing_dependencies):

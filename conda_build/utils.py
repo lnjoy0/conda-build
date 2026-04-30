@@ -148,43 +148,6 @@ def directory_size_slow(path):
     return total_size
 
 
-def directory_size(path):
-    try:
-        if on_win:
-            command = 'dir /s "{}"'  # Windows path can have spaces
-            out = subprocess.check_output(command.format(path), shell=True)
-        else:
-            command = "du -s {}"
-            out = subprocess.check_output(
-                command.format(path).split(), stderr=subprocess.PIPE
-            )
-
-        if hasattr(out, "decode"):
-            try:
-                out = out.decode(errors="ignore")
-            # This isn't important anyway so give up. Don't try search on bytes.
-            except (UnicodeDecodeError, IndexError):
-                if on_win:
-                    return 0
-                else:
-                    pass
-        if on_win:
-            # Windows can give long output, we need only 2nd to last line
-            out = out.strip().rsplit("\r\n", 2)[-2]
-            pattern = r"\s([\d\W]+).+"  # Language and punctuation neutral
-            out = re.search(pattern, out.strip()).group(1).strip()
-            out = out.replace(",", "").replace(".", "").replace(" ", "")
-        else:
-            out = out.split()[0]
-    except subprocess.CalledProcessError:
-        out = directory_size_slow(path)
-
-    try:
-        return int(out)  # size in bytes
-    except ValueError:
-        return 0
-
-
 class DummyPsutilProcess:
     def children(self, *args, **kwargs):
         return []
@@ -520,31 +483,6 @@ def try_acquire_locks(locks, timeout):
             lock.release()
 
 
-# with each of these, we are copying less metadata.  This seems to be necessary
-#   to cope with some shared filesystems with some virtual machine setups.
-#  See https://github.com/conda/conda-build/issues/1426
-def _copy_with_shell_fallback(src, dst):
-    is_copied = False
-    for func in (shutil.copy2, shutil.copy, shutil.copyfile):
-        try:
-            func(src, dst)
-            is_copied = True
-            break
-        except (OSError, PermissionError):
-            continue
-    if not is_copied:
-        try:
-            subprocess.check_call(
-                f"cp -a {src} {dst}",
-                shell=True,
-                stderr=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-            )
-        except subprocess.CalledProcessError as e:
-            if not os.path.isfile(dst):
-                raise OSError(f"Failed to copy {src} to {dst}.  Error was: {e}")
-
-
 def get_prefix_replacement_paths(src, dst):
     ssplit = src.split(os.path.sep)
     dsplit = dst.split(os.path.sep)
@@ -721,6 +659,31 @@ def merge_tree(
         copytree(src, dst, symlinks=symlinks)
 
 
+# with each of these, we are copying less metadata.  This seems to be necessary
+#   to cope with some shared filesystems with some virtual machine setups.
+#  See https://github.com/conda/conda-build/issues/1426
+def _copy_with_shell_fallback(src, dst):
+    is_copied = False
+    for func in (shutil.copy2, shutil.copy, shutil.copyfile):
+        try:
+            func(src, dst)
+            is_copied = True
+            break
+        except (OSError, PermissionError):
+            continue
+    if not is_copied:
+        try:
+            subprocess.check_call(
+                f"cp -a {src} {dst}",
+                shell=True,
+                stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+            )
+        except subprocess.CalledProcessError as e:
+            if not os.path.isfile(dst):
+                raise OSError(f"Failed to copy {src} to {dst}.  Error was: {e}")
+
+
 # purpose here is that we want *one* lock per location on disk.  It can be locked or unlocked
 #    at any time, but the lock within this process should all be tied to the same tracking
 #    mechanism.
@@ -798,36 +761,41 @@ decompressible_exts = (
 )
 
 
-def _tar_xf_fallback(tarball, dir_path, mode="r:*"):
-    from .os_utils.external import find_executable
-
-    if tarball.lower().endswith(".tar.z"):
-        uncompress = find_executable("uncompress")
-        if not uncompress:
-            uncompress = find_executable("gunzip")
-        if not uncompress:
-            sys.exit(
-                """\
-uncompress (or gunzip) is required to unarchive .z source files.
-"""
+def directory_size(path):
+    try:
+        if on_win:
+            command = 'dir /s "{}"'  # Windows path can have spaces
+            out = subprocess.check_output(command.format(path), shell=True)
+        else:
+            command = "du -s {}"
+            out = subprocess.check_output(
+                command.format(path).split(), stderr=subprocess.PIPE
             )
-        check_call_env([uncompress, "-f", tarball])
-        tarball = tarball[:-2]
 
-    t = tarfile.open(tarball, mode)
-    members = t.getmembers()
-    for i, member in enumerate(members, 0):
-        if os.path.isabs(member.name):
-            member.name = os.path.relpath(member.name, "/")
-        cwd = os.path.realpath(os.getcwd())
-        if not os.path.realpath(member.name).startswith(cwd):
-            member.name = member.name.replace("../", "")
-        if not os.path.realpath(member.name).startswith(cwd):
-            sys.exit("tarball contains unsafe path: " + member.name + " cwd is: " + cwd)
-        members[i] = member
+        if hasattr(out, "decode"):
+            try:
+                out = out.decode(errors="ignore")
+            # This isn't important anyway so give up. Don't try search on bytes.
+            except (UnicodeDecodeError, IndexError):
+                if on_win:
+                    return 0
+                else:
+                    pass
+        if on_win:
+            # Windows can give long output, we need only 2nd to last line
+            out = out.strip().rsplit("\r\n", 2)[-2]
+            pattern = r"\s([\d\W]+).+"  # Language and punctuation neutral
+            out = re.search(pattern, out.strip()).group(1).strip()
+            out = out.replace(",", "").replace(".", "").replace(" ", "")
+        else:
+            out = out.split()[0]
+    except subprocess.CalledProcessError:
+        out = directory_size_slow(path)
 
-    t.extractall(path=dir_path)
-    t.close()
+    try:
+        return int(out)  # size in bytes
+    except ValueError:
+        return 0
 
 
 def tar_xf_file(tarball, entries):
@@ -1468,6 +1436,38 @@ def env_var(name, value, callback=None):
             del os.environ[name]
         if callback:
             callback()
+
+
+def _tar_xf_fallback(tarball, dir_path, mode="r:*"):
+    from .os_utils.external import find_executable
+
+    if tarball.lower().endswith(".tar.z"):
+        uncompress = find_executable("uncompress")
+        if not uncompress:
+            uncompress = find_executable("gunzip")
+        if not uncompress:
+            sys.exit(
+                """\
+uncompress (or gunzip) is required to unarchive .z source files.
+"""
+            )
+        check_call_env([uncompress, "-f", tarball])
+        tarball = tarball[:-2]
+
+    t = tarfile.open(tarball, mode)
+    members = t.getmembers()
+    for i, member in enumerate(members, 0):
+        if os.path.isabs(member.name):
+            member.name = os.path.relpath(member.name, "/")
+        cwd = os.path.realpath(os.getcwd())
+        if not os.path.realpath(member.name).startswith(cwd):
+            member.name = member.name.replace("../", "")
+        if not os.path.realpath(member.name).startswith(cwd):
+            sys.exit("tarball contains unsafe path: " + member.name + " cwd is: " + cwd)
+        members[i] = member
+
+    t.extractall(path=dir_path)
+    t.close()
 
 
 def trim_empty_keys(dict_):
