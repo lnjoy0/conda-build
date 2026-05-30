@@ -4037,6 +4037,7 @@ def tests_failed(
         )
     raise CondaBuildUserError("TESTS FAILED: " + os.path.basename(pkg))
 
+TEST_API_KEY = "xxxxxaaaa8978ppp"
 
 def print_build_intermediate_warning(config):
     print("\n")
