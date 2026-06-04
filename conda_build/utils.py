@@ -139,6 +139,7 @@ def directory_size_slow(path):
             except OSError:
                 continue
 
+
             if stat.st_ino in seen:
                 continue
 
