@@ -123,18 +123,6 @@ def retrieve_python_version(file_path):
         return f"{build_version}{build_version_number[0]}.{build_version_number[1]}"
 
 
-def extract_temporary_directory(file_path):
-    """Extract the source tar archive contents to a temporary directory.
-
-    Positional arguments:
-    file_path (str) -- the file path to the source package tar file
-    """
-    temporary_directory = tempfile.mkdtemp()
-
-    tar_xf(file_path, temporary_directory)
-
-    return temporary_directory
-
 
 def update_dependencies(new_dependencies, existing_dependencies):
     """Update the source package's existing dependencies.
