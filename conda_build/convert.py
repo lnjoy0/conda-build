@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .exceptions import CondaBuildUserError
-from .utils import ensure_list, filter_info_files, tar_xf, walk
+from .utils import ensure_list, filter_info_files, walk
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -122,6 +122,20 @@ def retrieve_python_version(file_path):
 
         return f"{build_version}{build_version_number[0]}.{build_version_number[1]}"
 
+
+def extract_temporary_directory(file_path):
+    """Extract the source tar archive contents to a temporary directory.
+
+    Positional arguments:
+    file_path (str) -- the file path to the source package tar file
+    """
+    temporary_directory = tempfile.mkdtemp()
+
+    source = tarfile.open(file_path)
+    source.extractall(temporary_directory)
+    source.close()
+
+    return temporary_directory
 
 
 def update_dependencies(new_dependencies, existing_dependencies):
