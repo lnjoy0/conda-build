@@ -476,6 +476,68 @@ if Version(conda_version) >= Version("23.9"):
     OS_ARCH = (*OS_ARCH, "emscripten", "wasi", "wasm32")
 
 
+@pytest.mark.parametrize(
+    (
+        "subdir",  # defined in conda.base.constants.KNOWN_SUBDIRS
+        "expected",  # OS_ARCH keys expected to be True
+    ),
+    [
+        ("emscripten-wasm32", {"unix", "emscripten", "wasm32"}),
+        ("wasi-wasm32", {"wasi", "wasm32"}),
+        ("freebsd-64", {"freebsd", "x86", "x86_64"}),
+        ("linux-32", {"unix", "linux", "linux32", "x86"}),
+        ("linux-64", {"unix", "linux", "linux64", "x86", "x86_64"}),
+        ("linux-aarch64", {"unix", "linux", "aarch64"}),
+        ("linux-armv6l", {"unix", "linux", "arm", "armv6l"}),
+        ("linux-armv7l", {"unix", "linux", "arm", "armv7l"}),
+        ("linux-ppc64", {"unix", "linux", "ppc64"}),
+        ("linux-ppc64le", {"unix", "linux", "ppc64le"}),
+        ("linux-riscv64", {"unix", "linux", "riscv64"}),
+        ("linux-s390x", {"unix", "linux", "s390x"}),
+        ("osx-64", {"unix", "osx", "x86", "x86_64"}),
+        ("osx-arm64", {"unix", "osx", "arm64"}),
+        ("win-32", {"win", "win32", "x86"}),
+        ("win-64", {"win", "win64", "x86", "x86_64"}),
+        ("win-arm64", {"win", "arm64"}),
+        ("zos-z", {"zos", "z"}),
+    ],
+)
+@pytest.mark.parametrize("nomkl", [0, 1])
+def test_get_selectors(
+    monkeypatch: MonkeyPatch,
+    subdir: str,
+    expected: set[str],
+    nomkl: int,
+):
+    monkeypatch.setenv("FEATURE_NOMKL", str(nomkl))
+
+    config = Config(host_subdir=subdir)
+    assert get_selectors(config) == {
+        # defaults
+        "build_platform": context.subdir,
+        "lua": DEFAULT_VARIANTS["lua"],
+        "luajit": DEFAULT_VARIANTS["lua"] == 2,
+        "np": int(float(DEFAULT_VARIANTS["numpy"]) * 100),
+        "os": os,
+        "pl": DEFAULT_VARIANTS["perl"],
+        "py": int(f"{sys.version_info.major}{sys.version_info.minor}"),
+        "py26": sys.version_info[:2] == (2, 6),
+        "py27": sys.version_info[:2] == (2, 7),
+        "py2k": sys.version_info.major == 2,
+        "py33": sys.version_info[:2] == (3, 3),
+        "py34": sys.version_info[:2] == (3, 4),
+        "py35": sys.version_info[:2] == (3, 5),
+        "py36": sys.version_info[:2] == (3, 6),
+        "py3k": sys.version_info.major == 3,
+        "nomkl": bool(nomkl),
+        # default OS/arch values
+        **{key: False for key in OS_ARCH},
+        # environment variables
+        "environ": os.environ,
+        **os.environ,
+        # override with True values
+        **{key: True for key in expected},
+    }
 
 
 def test_fromstring():
