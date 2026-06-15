@@ -21,7 +21,6 @@ from bs4 import UnicodeDammit
 from conda.base.context import locate_prefix_by_name
 from conda.gateways.disk.read import compute_sum
 from conda.models.match_spec import GlobLowerStrMatch, MatchSpec
-from evalidate import EvalException, Expr, base_eval_model
 from frozendict import deepfreeze
 
 from . import utils
@@ -133,12 +132,6 @@ numpy_compatible_re = re.compile(r"pin_\w+\([\'\"]numpy[\'\"]")
 # used to avoid recomputing/rescanning recipe contents for used variables
 used_vars_cache = {}
 
-
-class OSModuleSubset:
-    "Subset of os module names commonly used in selectors"
-
-    environ = os.environ
-    getenv = os.getenv
 
 
 def get_selectors(config: Config) -> dict[str, bool]:
@@ -272,51 +265,6 @@ sel_pat = re.compile(r"(.+?)\s*(#.*)?\[([^\[\]]+)\](?(2)[^\(\)]*)$")
 # this function extracts the variable name from a NameError exception, it has the form of:
 # "NameError: name 'var' is not defined", where var is the variable that is not defined. This gets
 #    returned
-def parseNameNotFound(error) -> str:
-    message = str(error)
-    if isinstance(error, EvalException):
-        if message.endswith("is not allowed"):
-            return message.split()[-4]
-        return ""
-    else:  # assume NameError-like
-        m = re.search("'(.+?)'", message)
-        if len(m.groups()) == 1:
-            return m.group(1)
-        else:
-            return ""
-
-
-@cache
-def evalidate_model():
-    model = base_eval_model.clone()
-    model.nodes.extend(["Call", "Attribute"])
-    model.allowed_functions += [
-        "int",
-        "str",
-        "list",
-        "dict",
-        "tuple",
-    ]
-    model.attributes += [
-        # string methods
-        "endswith",
-        "index",
-        "lower",
-        "rsplit",
-        "split",
-        "startswith",
-        "strip",
-        "upper",
-        # dict methods
-        "get",
-        "items",
-        "keys",
-        "values",
-        # for legacy os.environ and os.getenv
-        "environ",
-        "getenv",
-    ]
-    return model
 
 
 # We evaluate the selector and return True (keep this line) or False (drop this line)
