@@ -3052,37 +3052,6 @@ def _set_env_variables_for_build(m, env):
         del env["replacements"]
 
 
-def write_build_scripts(m, script, build_file):
-    # TODO: Prepending the prefixes here should probably be guarded by
-    #         if not m.activate_build_script:
-    #       Leaving it as is, for now, since we need a quick, non-disruptive patch release.
-    with utils.path_prepended(m.config.host_prefix, False):
-        with utils.path_prepended(m.config.build_prefix, False):
-            env = environ.get_dict(m=m)
-
-    _set_env_variables_for_build(m, env)
-
-    work_file = join(m.config.work_dir, "conda_build.sh")
-    env_file = join(m.config.work_dir, "build_env_setup.sh")
-
-    with create_file_with_permissions(env_file, 0o600) as bf:
-        for k, v in env.items():
-            if v != "" and v is not None:
-                bf.write(f'export {k}="{v}"\n')
-        if m.activate_build_script:
-            _write_sh_activation_text(bf, m)
-
-    with create_file_with_permissions(work_file, 0o700) as bf:
-        # bf.write('set -ex\n')
-        bf.write("if [ -z ${CONDA_BUILD+x} ]; then\n")
-        bf.write(f"    source '{env_file}'\n")
-        bf.write("fi\n")
-        if script:
-            bf.write(script)
-        if isfile(build_file) and not script:
-            bf.write(Path(build_file).read_text())
-
-    return work_file, env_file
 
 
 def _write_test_run_script(
