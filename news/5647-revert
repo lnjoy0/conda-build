@@ -4,7 +4,7 @@
 
 ### Bug fixes
 
-* Limit `patchelf` to `<0.18`. (#5607)
+* Revert #5603 to avoid rendering regressions in multi-output recipes. (#5644, #5645 via #5647)
 
 ### Deprecations
 
