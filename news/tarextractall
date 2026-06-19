@@ -4,7 +4,7 @@
 
 ### Bug fixes
 
-* Limit `patchelf` to `<0.18`. (#5607)
+* Use `conda_build.utils.tar_xf` everywhere to avoid blind usage of `tar.extractall` in `conda render` and `conda convert`.
 
 ### Deprecations
 
