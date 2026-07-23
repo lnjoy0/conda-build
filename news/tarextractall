@@ -4,7 +4,7 @@
 
 ### Bug fixes
 
-* Revert #5603 to avoid rendering regressions in multi-output recipes. (#5644, #5645 via #5647)
+* Use `conda_build.utils.tar_xf` everywhere to avoid blind usage of `tar.extractall` in `conda render` and `conda convert`.
 
 ### Deprecations
 

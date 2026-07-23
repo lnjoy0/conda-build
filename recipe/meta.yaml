@@ -8,7 +8,7 @@ source:
   git_url: ../
 
 build:
-  script: {{ PYTHON }} -m pip install . --no-deps --no-build-isolation -vv
+  script: {{ PYTHON }} -m pip install . -vv
   entry_points:
     - conda-build = conda_build.cli.main_build:execute
     - conda-convert = conda_build.cli.main_convert:execute
@@ -54,6 +54,7 @@ requirements:
     - pytz
     - pyyaml
     - requests
+    - evalidate >=2,<3.0a0
     - tomli                        # [py<311]
     - tqdm
   run_constrained:

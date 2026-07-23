@@ -40,6 +40,7 @@ from .metadata import MetaData, MetaDataTuple, combine_top_level_metadata_with_o
 from .utils import (
     CONDA_PACKAGE_EXTENSION_V1,
     package_record_to_requirement,
+    tar_xf,
 )
 from .variants import (
     filter_by_key_value,
@@ -410,6 +411,8 @@ def get_upstream_pins(m: MetaData, precs, env):
     if m.python_version_independent and not m.noarch:
         ignore_pkgs_list.append("python")
     ignore_list = utils.ensure_list(m.get_value("build/ignore_run_exports"))
+    if m.python_version_independent and not m.noarch:
+        ignore_list.append("python")
     additional_specs = {}
     for prec in precs:
         if any((prec.name == req.split(" ")[0]) for req in ignore_pkgs_list):
@@ -945,8 +948,8 @@ def open_recipe(recipe: str | os.PathLike | Path) -> Iterator[Path]:
         yield recipe
     elif recipe.suffixes in [[".tar"], [".tar", ".gz"], [".tgz"], [".tar", ".bz2"]]:
         # extract the recipe to a temporary directory
-        with TemporaryDirectory() as tmp, tarfile.open(recipe, "r:*") as tar:
-            tar.extractall(path=tmp)
+        with TemporaryDirectory() as tmp:
+            tar_xf(recipe, tmp)
             yield Path(tmp)
     elif recipe.suffix == ".yaml":
         # read the recipe from the parent directory
