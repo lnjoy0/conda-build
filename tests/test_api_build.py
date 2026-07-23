@@ -1442,7 +1442,7 @@ def test_recursion_layers(testing_config):
     reason="spaces break openssl prefix replacement on *nix",
 )
 @pytest.mark.skipif(
-    datetime.now() < datetime(2025, 3, 31),
+    datetime.now() < datetime(2025, 5, 31),
     reason="Unblock CI while https://github.com/mamba-org/mamba/issues/3730 gets a fix",
 )
 def test_croot_with_spaces(testing_metadata, testing_workdir):
@@ -1462,7 +1462,11 @@ def test_unknown_selectors(testing_config):
 def test_failed_recipe_leaves_folders(testing_config):
     recipe = os.path.join(fail_dir, "recursive-build")
     metadata = api.render(recipe, config=testing_config)[0][0]
-    locks = get_conda_operation_locks(metadata.config)
+    locks = get_conda_operation_locks(
+        metadata.config.locking,
+        metadata.config.bldpkgs_dirs,
+        metadata.config.timeout,
+    )
     with pytest.raises((RuntimeError, exceptions.DependencyNeedsBuildingError)):
         api.build(metadata)
     assert os.path.isdir(metadata.config.build_folder), "build folder was removed"
@@ -2181,6 +2185,7 @@ def test_api_build_pytorch_cpu_issue5644(tmp_path, testing_config):
             del os.environ["CONDA_SUBDIR"]
 
 
+@pytest.mark.skipif(on_win, reason="file permissions not relevant on Windows")
 def test_build_script_permissions(testing_config):
     recipe = os.path.join(metadata_dir, "_noarch_python")
     metadata = api.render(

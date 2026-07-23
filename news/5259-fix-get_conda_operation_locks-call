@@ -4,7 +4,7 @@
 
 ### Bug fixes
 
-* Use more adequate permissions for temporary build scripts written to `$SRC_DIR`.
+* Fix `get_conda_operation_locks` call to use correct arguments. (#4215 via #5259)
 
 ### Deprecations
 
