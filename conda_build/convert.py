@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .exceptions import CondaBuildUserError
-from .utils import ensure_list, filter_info_files, tar_xf, walk
+from .utils import ensure_list, filter_info_files, walk
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -131,7 +131,9 @@ def extract_temporary_directory(file_path):
     """
     temporary_directory = tempfile.mkdtemp()
 
-    tar_xf(file_path, temporary_directory)
+    source = tarfile.open(file_path)
+    source.extractall(temporary_directory)
+    source.close()
 
     return temporary_directory
 

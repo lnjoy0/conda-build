@@ -40,7 +40,6 @@ from .metadata import MetaData, MetaDataTuple, combine_top_level_metadata_with_o
 from .utils import (
     CONDA_PACKAGE_EXTENSION_V1,
     package_record_to_requirement,
-    tar_xf,
 )
 from .variants import (
     filter_by_key_value,
@@ -936,26 +935,6 @@ def expand_outputs(
     return list(expanded_outputs.values())
 
 
-@contextmanager
-def open_recipe(recipe: str | os.PathLike | Path) -> Iterator[Path]:
-    """Open the recipe from a file (meta.yaml), directory (recipe), or tarball (package)."""
-    recipe = Path(recipe)
-
-    if not recipe.exists():
-        sys.exit(f"Error: non-existent: {recipe}")
-    elif recipe.is_dir():
-        # read the recipe from the current directory
-        yield recipe
-    elif recipe.suffixes in [[".tar"], [".tar", ".gz"], [".tgz"], [".tar", ".bz2"]]:
-        # extract the recipe to a temporary directory
-        with TemporaryDirectory() as tmp:
-            tar_xf(recipe, tmp)
-            yield Path(tmp)
-    elif recipe.suffix == ".yaml":
-        # read the recipe from the parent directory
-        yield recipe.parent
-    else:
-        sys.exit(f"Error: non-recipe: {recipe}")
 
 
 def render_recipe(
